@@ -1,0 +1,232 @@
+---
+title: 'Project Part 4: COVID19 Analysis'
+author: "Group22 (asr4, janagel2, jasonjc3, sk17, vmyadam2)"
+date: "April 15, 2020"
+output:
+  pdf_document:
+    toc: yes
+linkcolor: blue
+citecolor: blue
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction 
+
+Considering current world events and how we could have never imagined a situation like this 6-7 months ago, it was prudent to do an exploration of a COVID19 dataset. 
+
+### Choosing a Dataset 
+
+The Dataset we have chosen is the **COVID19 Dataset** by **Devakumar** and can be found [here](https://www.kaggle.com/imdevskp/corona-virus-report/metadata). 
+
+The **COVID19 Dataset** tracks the number of **Confirmed**,**Recovered**, and **Death** cases across the globe as a resut of the COVID19 pandemic. This is a great source and we was attracted to it due to its simplicity as well as the methods used to compile it, and to those interested in the compilation process, [this](https://github.com/imdevskp/covid_19_jhu_data_web_scrap_and_cleaning) will be of interest. 
+
+### Objectives 
+
+The objetives of this analysis are simple and will be as follows: 
+
+* Create data visualizations that explain the dataset to a random audience. 
+* Model number of Deaths due to coronavirus. 
+* Compare overall model against models froms data limited by country.
+    * Compare accuracy of said models against one another. 
+    
+## Methods
+
+To explain this dataset to everyone, we decided to make two visuals.
+
+1. First, simply table that shows the number of Confirmed Cases by Country and is sorted by the number of Deaths per Country. This lays out what this dataset is all about and is easy to understand. 
+2. We noticed the United States has the largest number of cases in the word, but since we do not know many people in the US who are affected, we wanted to explore the US further. We will create a map of the US that reflects a continous scale showing how many cases are in each state.
+
+For the modeling process we will make three models. 
+
+1. A world model which uses data from the entire world to try and predict the number of deaths.
+    * This model will be used to predit number of deaths for countries with extreme conditions like Italy and the US.
+2. A US model which uses data from the US only. 
+    * We will compare how this model fares against the rest of the world. 
+3. An Italian model which uses data from Italy only
+    * This too wil be compared against the rest of the world 
+4. The comparison will be made by checing the RMSE of the actual data against the predicted from the models as outlined above. The world mode will be tested again the entire world minus the US and Italy, to see which model performs the best under which circumstances.
+
+## Results 
+
+The results are as follow
+
+### Visuals
+
+```{r echo=FALSE}
+#import data
+covid = read.csv("covid_19_clean_complete.csv")
+uscovid = read.csv("usa_county_wise.csv")
+```
+
+Here is a death toll by country from the COVID19 Pandemic
+
+```{r include=FALSE}
+# create bar graph for deaths per country 
+library(tidyverse)
+library(formattable)
+library(usmap)
+```
+
+```{r echo=FALSE}
+names(covid)[2] <- "Country"
+total_deaths = group_by(filter(covid, Date=="4/20/20"), Country)
+count = arrange(summarise(total_deaths, `Total Deaths` = sum(Deaths), `Confirmed Cases` = sum(Confirmed)), desc(`Total Deaths`))[1:10,]
+count
+```
+
+
+Since the United States have the highest confirmed cases, let us have a look at how the virus has spread throughout the country itself. 
+
+```{r echo=FALSE}
+# create summary of deaths by state 
+usdeaths = group_by(filter(uscovid, Date=="4/20/20"), Province_State)
+count2 = summarise(usdeaths, `Total Deaths` = sum(Deaths))
+g2 <- statepop
+g2$deaths = g2$abbr
+for (i in g2$full) {
+  g2$deaths[g2$full==i]=count2$`Total Deaths`[count2$Province_State==i]
+}
+
+g2$deaths = as.numeric(g2$deaths)
+
+plot_usmap(data = g2, values = "deaths", color = "black") + 
+  labs(title = "COVID19 Deaths in the US ", 
+       subtitle = "A map showing the number of deaths due to COVID19 across all US States") +
+  scale_fill_continuous(name = "Deaths", low="white",high="darkred", label=scales::comma) + 
+  theme(legend.position = c(0.93,0.3), legend.title = element_text(size=12),legend.text = element_text(size=9),plot.title = element_text(hjust = 0.5,vjust = -3.0 ,size = 25), plot.subtitle = element_text(hjust=0.5,vjust = -6.5, size = 10))
+```
+
+* This map shows that while the US itself is not doing terribly, the state of New York is in dire trouble. 
+
+### Models 
+
+We made three MLR Models:
+
+* An overall model where data from the entire world is used.
+* A model where data from the US is used (the country with the most cases and deaths).
+* A model where data from Italy is used (the country with the second most deaths).
+
+
+* Variabes Used:
+    * `Long`: Longitude
+    * `Lat`: Latitude
+    * `Confirmed`: Number of Confirmed Cases
+    * `Recovered`: Number of Recovered Cases
+    * `Days`: Number of Days elsapsed since 1/21/20
+```{r echo=FALSE}
+# create variable for storing number of days elapsed 
+covid$Days = covid$Confirmed 
+countrynames = unique(covid$Country)
+dates = unique(covid$Date)
+for (i in countrynames) {
+  for (j in seq(1,length(dates),1)) { 
+    covid$Days[covid$Country==i][j] = j
+  }
+}
+```
+
+```{r echo=FALSE} 
+world_data = filter(covid, Date == "4/20/20")
+world_model = lm(Deaths~Lat+Long+Confirmed+Recovered+Days, data=covid)
+usdata = filter(covid, Country=="US")
+us_model = lm(Deaths~Confirmed+Recovered+Days, data=usdata)
+italydata = filter(covid, Country=="Italy")
+italy_model = lm(Deaths~Confirmed+Recovered+Days, data=italydata)
+index = which(covid$Country=="US")
+nousdata = filter(covid[-index,])
+index2 = which(covid$Country=="Italy")
+noitalydata = filter(covid[-index2,])
+index3  = which(covid$Country=="Italy"|covid$Country=="US")
+noitalyusdata = covid[-index3,]
+```
+
+The world model was used to predict both Italian and US conditions, while the Italian and US models were used to predict the world conditions to see which was the most useful. The RMSE are shown below
+
+```{r echo=FALSE}
+test_rmse <- function(data, model) {
+  actual = data$Deaths
+  n = length(data$Deaths)
+  predicted = predict(model, data)
+  rmse = sqrt(sum((actual-predicted)^2)/n)
+  return(rmse)
+}
+```
+
+* **World Model against US Data** : `r round(test_rmse(usdata, world_model),2)`
+* **World Model against Italian Data**: `r round(test_rmse(italydata, world_model),2)`
+* **US Model against World Data**:  `r round(test_rmse(nousdata, us_model),2)`
+* **Italian Model against World Data**: `r round(test_rmse(noitalydata, italy_model),2)`
+* **World Model against World Data minus US and Italy**: `r round(test_rmse(noitalyusdata, world_model),2)`
+
+Whilst the world model performs badly against both US and Itlaian sets, it completely outperforms the the US and Italian models when evluating for the entire world. 
+
+We can also run some tests on the world model to see if some of the assumptions that are made when making models are held.
+
+```{r include=FALSE}
+library(lmtest)
+
+bptest(world_model) # run Breusch-Paga test for constant variance 
+```
+
+We can conclude from the small p-value that the constant variance assumption has been violated. 
+
+```{r include=FALSE}
+plot(Deaths ~ Lat + Long + Confirmed + Recovered+ Days, data = covid,
+     col = "blue",
+     pch = 20) # plot data
+```
+
+By looking at the graphs of the data[**Appendix: Plots**], we can visually see that there are some sections that are more spread out when compared to other regions. Although this is not optimal for building a MLR model, this is the data that has been collected and it must be considered. 
+
+## Conclusions 
+
+After having looked at the RMSE values for all sets, We have to conclude that the world model, which looks as follows, is the most suitable for predicting the number of **Deaths** from any **random** set of data. 
+
+```{r}
+summary(world_model)
+```
+
+## Appendix 
+
+Source: https://www.kaggle.com/imdevskp/corona-virus-report
+
+#### COVID-19 Death toll by country
+```{r}
+names(covid)[2] <- "Country"
+total_deaths = group_by(filter(covid, Date=="4/20/20"), Country)
+count = arrange(summarise(total_deaths, `Total Deaths` = sum(Deaths), `Confirmed Cases` = sum(Confirmed)), desc(`Total Deaths`))[1:10,]
+count
+```
+
+
+#### COVID-19 US Deaths Map
+```{r}
+# create summary of deaths by state 
+usdeaths = group_by(filter(uscovid, Date=="4/20/20"), Province_State)
+count2 = summarise(usdeaths, `Total Deaths` = sum(Deaths))
+g2 <- statepop
+g2$deaths = g2$abbr
+for (i in g2$full) {
+  g2$deaths[g2$full==i]=count2$`Total Deaths`[count2$Province_State==i]
+}
+
+g2$deaths = as.numeric(g2$deaths)
+
+plot_usmap(data = g2, values = "deaths", color = "black") + 
+  labs(title = "COVID19 Deaths in the US ", 
+       subtitle = "A map showing the number of deaths due to COVID19 across all US States") +
+  scale_fill_continuous(name = "Deaths", low="white",high="darkred", label=scales::comma) + 
+  theme(legend.position = c(0.93,0.3), legend.title = element_text(size=12),legend.text = element_text(size=9),plot.title = element_text(hjust = 0.5,vjust = -3.0 ,size = 25), plot.subtitle = element_text(hjust=0.5,vjust = -6.5, size = 10))
+```
+
+#### Plots 
+```{r}
+plot(Deaths ~ Lat + Long + Confirmed + Recovered+ Days, data = covid,
+     col = "blue",
+     pch = 20) # plot data
+```
+
